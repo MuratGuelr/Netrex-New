@@ -78,55 +78,7 @@ export default function Sidebar({
   const [editChannelName, setEditChannelName] = useState("");
   const [showNotificationSettings, setShowNotificationSettings] = useState(false);
   const [notificationChannelId, setNotificationChannelId] = useState<string | null>(null);
-  const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
-  
   const { settings, getChannelNotificationLevel, updateLastReadMessage } = useNotificationSettings(currentUser);
-
-  // Unread mesaj sayılarını hesapla
-  useEffect(() => {
-    if (!db || !currentUser) return;
-
-    const unsubscribes: (() => void)[] = [];
-    const counts: Record<string, number> = {};
-
-    channels.forEach((channel) => {
-      if (channel.type === 'voice' || channel.type === 'dm') return; // Sadece text kanalları için
-      
-      if (!db) return;
-      const lastReadMessageId = settings.lastReadMessages[channel.id];
-      const messagesRef = collection(db, 'channels', channel.id, 'messages');
-      const q = query(messagesRef, orderBy('timestamp', 'desc'));
-      
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        let unreadCount = 0;
-        let foundLastRead = !lastReadMessageId;
-
-        snapshot.forEach((doc) => {
-          const msg = doc.data();
-          // Kendi mesajlarımızı sayma
-          if (msg.uid === currentUser.uid) return;
-          
-          // Son okunan mesajı bulana kadar say
-          if (!foundLastRead) {
-            if (doc.id === lastReadMessageId) {
-              foundLastRead = true;
-            } else {
-              unreadCount++;
-            }
-          }
-        });
-
-        counts[channel.id] = unreadCount;
-        setUnreadCounts({ ...counts });
-      });
-
-      unsubscribes.push(unsubscribe);
-    });
-
-    return () => {
-      unsubscribes.forEach((unsub) => unsub());
-    };
-  }, [channels, settings.lastReadMessages, currentUser]);
 
   // Kanal seçildiğinde son okunan mesajı güncelle
   useEffect(() => {
@@ -478,11 +430,6 @@ export default function Sidebar({
                           <span className="truncate">{displayName}</span>
                         </div>
                         <div className="flex items-center gap-1 ml-auto">
-                          {unreadCounts[channel.id] > 0 && (
-                            <span className="bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
-                              {unreadCounts[channel.id] > 99 ? '99+' : unreadCounts[channel.id]}
-                            </span>
-                          )}
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -541,11 +488,6 @@ export default function Sidebar({
                         <div className="truncate flex items-center flex-1 min-w-0">
                           {icon}
                           <span className="truncate">{displayName}</span>
-                          {unreadCounts[channel.id] > 0 && (
-                            <span className="ml-2 bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
-                              {unreadCounts[channel.id] > 99 ? '99+' : unreadCounts[channel.id]}
-                            </span>
-                          )}
                         </div>
                         <button
                           onClick={(e) => {

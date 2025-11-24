@@ -1,10 +1,11 @@
-import type { Metadata } from 'next';
-import Script from 'next/script';
-import './globals.css';
+import type { Metadata } from "next";
+import Script from "next/script";
+import "./globals.css";
 
 export const metadata: Metadata = {
-  title: 'Chatify - Discord Benzeri Sohbet',
-  description: 'Discord benzeri ücretsiz sohbet uygulaması - Metin ve Sesli Kanallar',
+  title: "Netrex - Anasayfa",
+  description:
+    "Discord benzeri ücretsiz sohbet uygulaması - Metin ve Sesli Kanallar",
 };
 
 export default function RootLayout({
@@ -34,4 +35,3 @@ export default function RootLayout({
     </html>
   );
 }
-

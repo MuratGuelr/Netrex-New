@@ -23,10 +23,21 @@ export default function LoginScreen({
   return (
     <div className="fixed inset-0 z-50 bg-[#313338] flex flex-col items-center justify-center w-full h-full">
       <div className="bg-[#2b2d31] p-8 rounded-lg shadow-2xl text-center w-full max-w-sm">
-        <div className="w-20 h-20 bg-[#5865F2] rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg">
-          <i className="fas fa-comments text-4xl text-white"></i>
+        <div className="w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg overflow-hidden bg-[#5865F2]">
+          <img 
+            src="/logo.png" 
+            alt="Netrex" 
+            className="w-full h-full object-contain"
+            onError={(e) => {
+              // Fallback if logo doesn't load
+              const parent = (e.target as HTMLImageElement).parentElement;
+              if (parent) {
+                parent.innerHTML = '<i class="fas fa-comments text-4xl text-white"></i>';
+              }
+            }}
+          />
         </div>
-        <h1 className="text-2xl font-bold mb-2 text-white">Chatify</h1>
+        <h1 className="text-2xl font-bold mb-2 text-white">Netrex</h1>
         
         {!showAnonymousForm ? (
           <div className="space-y-3 mt-6">

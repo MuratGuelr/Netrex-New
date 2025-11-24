@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { User } from 'firebase/auth';
 import { collection, query, onSnapshot, orderBy } from 'firebase/firestore';
 import { db } from '@/lib/firebase/config';
+import { generateAvatar } from '@/utils/avatarGenerator';
 
 interface UserData {
   uid: string;
@@ -18,6 +19,7 @@ interface UserListProps {
   onUserClick: (user: UserData) => void;
   onUsersMapChange: (map: Record<string, UserData>) => void;
   currentChannel: any;
+  onToggle?: () => void;
 }
 
 export default function UserList({
@@ -25,45 +27,99 @@ export default function UserList({
   onUserClick,
   onUsersMapChange,
   currentChannel,
+  onToggle,
 }: UserListProps) {
   const [users, setUsers] = useState<UserData[]>([]);
 
   useEffect(() => {
     if (!db) return;
     
-    const q = query(collection(db, 'users'), orderBy('displayName', 'asc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const usersData: UserData[] = [];
-      const usersMap: Record<string, UserData> = {};
+    // orderBy kullanmadan direkt collection'ı dinle (index gerektirmez)
+    const q = query(collection(db, 'users'));
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const usersData: UserData[] = [];
+        const usersMap: Record<string, UserData> = {};
 
-      snapshot.forEach((doc) => {
-        const userData = { ...doc.data(), uid: doc.id } as UserData;
-        usersData.push(userData);
-        usersMap[userData.uid] = userData;
-      });
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          // displayName öncelik sırası: Firestore'daki displayName > email'den türetilen > 'Kullanıcı'
+          let displayName = data.displayName;
+          if (!displayName || displayName.trim() === '') {
+            // Eğer displayName yoksa, email'den türet
+            if (data.email) {
+              displayName = data.email.split('@')[0];
+            } else {
+              displayName = 'Kullanıcı';
+            }
+          }
+          
+          const userData: UserData = {
+            uid: doc.id,
+            displayName: displayName,
+            photoURL: data.photoURL || generateAvatar(displayName, 32),
+            isOnline: data.isOnline,
+            lastSeen: data.lastSeen,
+          };
+          usersData.push(userData);
+          usersMap[userData.uid] = userData;
+        });
 
-      setUsers(usersData);
-      onUsersMapChange(usersMap);
-    });
+        // displayName'e göre sırala (client-side)
+        usersData.sort((a, b) => {
+          const nameA = (a.displayName || '').toLowerCase();
+          const nameB = (b.displayName || '').toLowerCase();
+          return nameA.localeCompare(nameB);
+        });
+
+        setUsers(usersData);
+        onUsersMapChange(usersMap);
+      },
+      (error) => {
+        console.error('UserList snapshot error:', error);
+      }
+    );
 
     return () => unsubscribe();
   }, [onUsersMapChange]);
 
   const isOnline = (user: UserData) => {
-    if (user.isOnline === true) return true;
+    // Önce isOnline field'ını kontrol et
+    if (user.isOnline === true) {
+      // Eğer isOnline true ise, lastSeen'i de kontrol et (5 dakika içindeyse online)
+      if (user.lastSeen) {
+        try {
+          if (user.lastSeen && typeof user.lastSeen.toDate === 'function') {
+            const lastSeenTime = user.lastSeen.toDate().getTime();
+            const now = Date.now();
+            const timeDiff = now - lastSeenTime;
+            // 5 dakika (300000ms) içindeyse online
+            return timeDiff < 300000;
+          }
+        } catch (error) {
+          // Timestamp parse hatası durumunda isOnline field'ına güven
+          return user.isOnline === true;
+        }
+      }
+      return true;
+    }
+    
+    // isOnline false veya undefined ise, lastSeen'e bak
     if (user.lastSeen) {
       try {
-        // Firestore Timestamp kontrolü
         if (user.lastSeen && typeof user.lastSeen.toDate === 'function') {
           const lastSeenTime = user.lastSeen.toDate().getTime();
           const now = Date.now();
-          return now - lastSeenTime < 300000; // 5 dakika
+          const timeDiff = now - lastSeenTime;
+          // 2 dakika (120000ms) içindeyse online (daha kısa süre)
+          return timeDiff < 120000;
         }
       } catch (error) {
-        // Timestamp parse hatası durumunda false döndür
         return false;
       }
     }
+    
     return false;
   };
 
@@ -71,9 +127,18 @@ export default function UserList({
   const offlineUsers = users.filter((u) => !isOnline(u) && u.uid !== currentUser.uid);
 
   return (
-    <div className="w-60 bg-[#2b2d31] flex flex-col flex-shrink-0 border-l border-[#1f2023]">
-      <div className="h-12 flex items-center px-4 font-bold text-gray-400 shadow-sm border-b border-[#1f2023] uppercase text-xs tracking-wide">
-        Üyeler
+    <div className="w-60 bg-[#2b2d31] flex flex-col flex-shrink-0 border-l border-[#1f2023] h-full">
+      <div className="h-12 flex items-center justify-between px-4 font-bold text-gray-400 shadow-sm border-b border-[#1f2023] uppercase text-xs tracking-wide">
+        <span>Üyeler</span>
+        {onToggle && (
+          <button
+            onClick={onToggle}
+            className="text-gray-400 hover:text-white p-1 rounded hover:bg-[#35373C] transition-colors"
+            title="Üyeleri Gizle"
+          >
+            <i className="fas fa-chevron-right text-xs"></i>
+          </button>
+        )}
       </div>
       <div className="flex-1 overflow-y-auto p-3">
         <div className="mb-6">
@@ -89,7 +154,7 @@ export default function UserList({
               >
                 <div className="relative">
                   <img
-                    src={user.photoURL}
+                    src={user.photoURL || generateAvatar(user.displayName, 32)}
                     className="w-8 h-8 rounded-full object-cover"
                     alt={user.displayName}
                   />
@@ -117,7 +182,7 @@ export default function UserList({
               >
                 <div className="relative">
                   <img
-                    src={user.photoURL}
+                    src={user.photoURL || generateAvatar(user.displayName, 32)}
                     className="w-8 h-8 rounded-full object-cover"
                     alt={user.displayName}
                   />

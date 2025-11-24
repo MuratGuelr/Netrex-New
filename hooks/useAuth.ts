@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   User,
   signInWithPopup,
@@ -16,6 +16,8 @@ import { generateAvatar } from '@/utils/avatarGenerator';
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const cleanupFunctionsRef = useRef<Array<() => void>>([]);
 
   useEffect(() => {
     if (!auth || !db) {
@@ -24,6 +26,14 @@ export function useAuth() {
     }
     
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      // Önceki cleanup'ları temizle
+      cleanupFunctionsRef.current.forEach((cleanup) => cleanup());
+      cleanupFunctionsRef.current = [];
+      if (heartbeatIntervalRef.current) {
+        clearInterval(heartbeatIntervalRef.current);
+        heartbeatIntervalRef.current = null;
+      }
+
       if (firebaseUser) {
         setUser(firebaseUser);
         // Kullanıcı bilgilerini Firestore'dan al veya varsayılan değerler kullan
@@ -34,38 +44,46 @@ export function useAuth() {
         const userDocRef = doc(db, 'users', firebaseUser.uid);
         const userSnapshot = await getDoc(userDocRef);
         
-        let displayName = firebaseUser.displayName || 'Kullanıcı';
-        let photoURL = firebaseUser.photoURL;
+        let displayName: string | null = null;
+        let photoURL: string | null = null;
         
-        // Eğer Firestore'da kullanıcı bilgisi varsa onu kullan
-        if (userSnapshot.exists()) {
-          const userData = userSnapshot.data();
-          displayName = userData.displayName || displayName;
-          photoURL = userData.photoURL || photoURL;
-        } else if (!firebaseUser.isAnonymous && db) {
-          // Google ile giriş yapıldıysa Firestore'a kaydet
-          displayName = firebaseUser.displayName || 'Kullanıcı';
-          photoURL = firebaseUser.photoURL || generateAvatar(displayName, 40);
+        if (firebaseUser.isAnonymous) {
+          // Anonim kullanıcı: Firestore'dan displayName'i al (loginAnonymously'de kaydedilmiş olmalı)
+          if (userSnapshot.exists()) {
+            const userData = userSnapshot.data();
+            displayName = userData.displayName || null;
+            photoURL = userData.photoURL || null;
+          }
+        } else {
+          // Google ile giriş yapıldıysa: Firebase Auth'tan gelen displayName'i kullan ve Firestore'a kaydet
+          displayName = firebaseUser.displayName || null;
+          photoURL = firebaseUser.photoURL || null;
           
-          await setDoc(
-            doc(db, 'users', firebaseUser.uid),
-            {
-              uid: firebaseUser.uid,
-              displayName: displayName,
-              photoURL: photoURL,
-              email: firebaseUser.email || null,
-              isAnonymous: false,
-              lastSeen: serverTimestamp(),
-              isOnline: true,
-            },
-            { merge: true }
-          );
+          // Google'dan gelen bilgileri Firestore'a kaydet/güncelle
+          if (db) {
+            await setDoc(
+              doc(db, 'users', firebaseUser.uid),
+              {
+                uid: firebaseUser.uid,
+                displayName: displayName, // Google'dan gelen displayName'i her zaman kaydet
+                photoURL: photoURL,
+                email: firebaseUser.email || null,
+                isAnonymous: false,
+                lastSeen: serverTimestamp(),
+                isOnline: true,
+              },
+              { merge: true }
+            );
+          }
         }
         
         // Online durumunu güncelle
         if (db) {
+          const userRef = doc(db, 'users', firebaseUser.uid);
+          
+          // İlk online durumunu ayarla
           await setDoc(
-            doc(db, 'users', firebaseUser.uid),
+            userRef,
             {
               lastSeen: serverTimestamp(),
               isOnline: true,
@@ -77,18 +95,98 @@ export function useAuth() {
           const onlineRef = doc(db, 'users', firebaseUser.uid, 'presence', 'online');
           await setDoc(onlineRef, { isOnline: true }, { merge: true });
 
-          // Kullanıcı kapandığında offline yap
-          const handleBeforeUnload = async () => {
+          // Düzenli olarak lastSeen güncelle (heartbeat)
+          heartbeatIntervalRef.current = setInterval(async () => {
+            if (db && typeof document !== 'undefined' && document.visibilityState === 'visible') {
+              try {
+                await setDoc(
+                  userRef,
+                  {
+                    lastSeen: serverTimestamp(),
+                    isOnline: true,
+                  },
+                  { merge: true }
+                );
+              } catch (error) {
+                console.error('Heartbeat error:', error);
+              }
+            }
+          }, 30000); // 30 saniyede bir güncelle
+
+          // Sayfa görünürlüğü değiştiğinde
+          const handleVisibilityChange = async () => {
             if (db) {
-              await setDoc(
-                doc(db, 'users', firebaseUser.uid),
-                { isOnline: false, lastSeen: serverTimestamp() },
-                { merge: true }
-              );
+              if (document.visibilityState === 'visible') {
+                // Sayfa görünür olduğunda online yap
+                await setDoc(
+                  userRef,
+                  {
+                    lastSeen: serverTimestamp(),
+                    isOnline: true,
+                  },
+                  { merge: true }
+                );
+              } else {
+                // Sayfa gizlendiğinde offline yap
+                await setDoc(
+                  userRef,
+                  {
+                    isOnline: false,
+                    lastSeen: serverTimestamp(),
+                  },
+                  { merge: true }
+                );
+              }
             }
           };
+
+          // Sayfa kapatıldığında offline yap
+          const handleBeforeUnload = () => {
+            if (db) {
+              // beforeunload'da async işlemler garanti çalışmaz ama denemeye değer
+              setDoc(
+                userRef,
+                { isOnline: false, lastSeen: serverTimestamp() },
+                { merge: true }
+              ).catch(() => {});
+            }
+          };
+
+          // Pagehide event'i (daha güvenilir)
+          const handlePageHide = () => {
+            if (db) {
+              setDoc(
+                userRef,
+                { isOnline: false, lastSeen: serverTimestamp() },
+                { merge: true }
+              ).catch(() => {});
+            }
+          };
+
           if (typeof window !== 'undefined') {
+            document.addEventListener('visibilitychange', handleVisibilityChange);
             window.addEventListener('beforeunload', handleBeforeUnload);
+            window.addEventListener('pagehide', handlePageHide);
+
+            // Cleanup function'ları sakla
+            cleanupFunctionsRef.current.push(() => {
+              if (heartbeatIntervalRef.current) {
+                clearInterval(heartbeatIntervalRef.current);
+                heartbeatIntervalRef.current = null;
+              }
+              document.removeEventListener('visibilitychange', handleVisibilityChange);
+              window.removeEventListener('beforeunload', handleBeforeUnload);
+              window.removeEventListener('pagehide', handlePageHide);
+              
+              // Component unmount olduğunda offline yap
+              if (db) {
+                setDoc(
+                  userRef,
+                  { isOnline: false, lastSeen: serverTimestamp() },
+                  { merge: true }
+                ).catch(() => {});
+              }
+            });
           }
         }
       } else {
@@ -97,7 +195,16 @@ export function useAuth() {
       setLoading(false);
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      // Tüm cleanup function'ları çalıştır
+      cleanupFunctionsRef.current.forEach((cleanup) => cleanup());
+      cleanupFunctionsRef.current = [];
+      if (heartbeatIntervalRef.current) {
+        clearInterval(heartbeatIntervalRef.current);
+        heartbeatIntervalRef.current = null;
+      }
+    };
   }, []);
 
   const login = async () => {
@@ -111,19 +218,25 @@ export function useAuth() {
     try {
       const result = await signInAnonymously(auth);
       // Kullanıcı adını Firestore'a kaydet
-      if (result.user) {
+      if (result.user && db) {
+        const userRef = doc(db, 'users', result.user.uid);
         await setDoc(
-          doc(db, 'users', result.user.uid),
+          userRef,
           {
             uid: result.user.uid,
-            displayName: username,
-            photoURL: generateAvatar(username, 40),
+            displayName: username.trim(),
+            photoURL: generateAvatar(username.trim(), 40),
             isAnonymous: true,
             lastSeen: serverTimestamp(),
             isOnline: true,
+            email: null,
           },
           { merge: true }
         );
+        
+        // Online durumunu gerçek zamanlı güncelle
+        const onlineRef = doc(db, 'users', result.user.uid, 'presence', 'online');
+        await setDoc(onlineRef, { isOnline: true }, { merge: true });
       }
       // Anonim kullanıcı için otomatik olarak onAuthStateChanged tetiklenecek
       return result;

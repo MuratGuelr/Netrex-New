@@ -12,7 +12,7 @@ import { Room } from 'livekit-client';
 import { User } from 'firebase/auth';
 import { Track } from 'livekit-client';
 import { generateAvatar } from '@/utils/avatarGenerator';
-import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase/config';
 
 interface VoiceChannelProps {
@@ -22,28 +22,72 @@ interface VoiceChannelProps {
   onLeave: () => void;
 }
 
-function VoiceControls({ onDeafenChange }: { onDeafenChange?: (deafened: boolean) => void }) {
+function VoiceControls({ 
+  onDeafenChange,
+  isDeafened 
+}: { 
+  onDeafenChange?: (deafened: boolean) => void;
+  isDeafened?: boolean;
+}) {
   const { localParticipant } = useLocalParticipant();
   const [isMuted, setIsMuted] = useState(false);
-  const [isDeafened, setIsDeafened] = useState(false);
 
   useEffect(() => {
     if (!localParticipant) return;
 
+    let initialCheckInterval: NodeJS.Timeout | null = null;
+    let timeoutId: NodeJS.Timeout | null = null;
+
     const updateMuteState = () => {
       try {
         const micTrack = localParticipant.getTrackPublication(Track.Source.Microphone);
-        setIsMuted(micTrack?.isMuted ?? false);
+        // LiveKit varsayılan olarak mikrofonu açık başlatır
+        // Track varsa ve muted ise true, değilse false
+        if (micTrack) {
+          // Track publish edilmiş, mute durumunu kontrol et
+          setIsMuted(micTrack.isMuted === true);
+        } else {
+          // Track henüz publish edilmemiş, varsayılan olarak açık (false)
+          setIsMuted(false);
+        }
       } catch (error) {
         console.error('Error updating mute state:', error);
       }
     };
 
+    // İlk kontrol - track publish edilene kadar birkaç kez kontrol et
     updateMuteState();
+    initialCheckInterval = setInterval(() => {
+      const micTrack = localParticipant.getTrackPublication(Track.Source.Microphone);
+      if (micTrack) {
+        if (initialCheckInterval) {
+          clearInterval(initialCheckInterval);
+          initialCheckInterval = null;
+        }
+        updateMuteState();
+      }
+    }, 100);
+
+    // 2 saniye sonra interval'i temizle
+    timeoutId = setTimeout(() => {
+      if (initialCheckInterval) {
+        clearInterval(initialCheckInterval);
+        initialCheckInterval = null;
+      }
+    }, 2000);
 
     const handleTrackPublished = (publication: any) => {
       if (publication?.source === Track.Source.Microphone) {
-        setTimeout(updateMuteState, 100);
+        if (initialCheckInterval) {
+          clearInterval(initialCheckInterval);
+          initialCheckInterval = null;
+        }
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+        // Track publish edildiğinde biraz bekle ve durumu kontrol et
+        setTimeout(updateMuteState, 200);
       }
     };
     
@@ -67,6 +111,12 @@ function VoiceControls({ onDeafenChange }: { onDeafenChange?: (deafened: boolean
     localParticipant.on('trackUnmuted', handleTrackUnmuted);
 
     return () => {
+      if (initialCheckInterval) {
+        clearInterval(initialCheckInterval);
+      }
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
       localParticipant.off('trackPublished', handleTrackPublished);
       localParticipant.off('trackUnpublished', handleTrackUnpublished);
       localParticipant.off('trackMuted', handleTrackMuted);
@@ -88,13 +138,12 @@ function VoiceControls({ onDeafenChange }: { onDeafenChange?: (deafened: boolean
   };
 
   const toggleDeafen = async () => {
-    const newDeafenedState = !isDeafened;
-    setIsDeafened(newDeafenedState);
+    const newDeafenedState = !(isDeafened ?? false);
     
-    // Parent component'e deafen durumunu bildir
+    // Parent component'e deafen durumunu bildir (bu remote audio track'leri mute edecek)
     onDeafenChange?.(newDeafenedState);
     
-    // Deafen durumunda hem mute et hem de ses seviyesini 0 yap
+    // Deafen durumunda mikrofonu mute et
     if (newDeafenedState) {
       // Deafen olduğunda mute et
       await localParticipant?.setMicrophoneEnabled(false);
@@ -122,13 +171,13 @@ function VoiceControls({ onDeafenChange }: { onDeafenChange?: (deafened: boolean
       <button
         onClick={toggleDeafen}
         className={`p-2.5 rounded-lg transition-all duration-200 ${
-          isDeafened
+          (isDeafened ?? false)
             ? 'bg-red-500 hover:bg-red-600 text-white shadow-lg'
             : 'bg-[#2b2d31] hover:bg-[#35373C] text-gray-300 hover:text-white'
         }`}
-        title={isDeafened ? 'Sesi Aç' : 'Sesi Kapat'}
+        title={(isDeafened ?? false) ? 'Sesi Aç' : 'Sesi Kapat'}
       >
-        <i className={`fas ${isDeafened ? 'fa-volume-mute' : 'fa-volume-up'} text-sm`}></i>
+        <i className={`fas ${(isDeafened ?? false) ? 'fa-volume-mute' : 'fa-volume-up'} text-sm`}></i>
       </button>
     </div>
   );
@@ -886,7 +935,7 @@ function VoiceChannelContent({
           localParticipant.setMicrophoneEnabled(!newDeafenedState).catch(console.error);
         }
         
-        // Remote audio track'leri mute/unmute et
+        // Remote audio track'leri mute/unmute et (useEffect de bunu yapacak ama anında güncellemek için)
         if (room) {
           remoteParticipants.forEach((participant) => {
             try {
@@ -914,10 +963,10 @@ function VoiceChannelContent({
 
     const handleTrackSubscribed = (track: any, publication: any, participant: any) => {
       try {
-        if (track && track.kind === 'audio' && !participant.isLocal && isDeafened) {
-          // Deafen durumunda remote audio'yu mute et
+        if (track && track.kind === 'audio' && !participant.isLocal) {
+          // Deafen durumuna göre remote audio'yu mute/unmute et
           if (track.mediaStreamTrack) {
-            track.mediaStreamTrack.enabled = false;
+            track.mediaStreamTrack.enabled = !isDeafened;
           }
         }
       } catch (error) {
@@ -1061,7 +1110,7 @@ function VoiceChannelContent({
         </div>
 
         <div className="flex items-center gap-2">
-          <VoiceControls onDeafenChange={setIsDeafened} />
+          <VoiceControls onDeafenChange={setIsDeafened} isDeafened={isDeafened} />
 
           <div className="flex-1"></div>
 
@@ -1486,6 +1535,7 @@ export default function VoiceChannel({
   const [error, setError] = useState<string | null>(null);
   const [bitrate, setBitrate] = useState(64000);
   const roomRef = useRef<any>(null);
+  const participantAddedRef = useRef(false);
 
   // Kanal bitrate ayarını yükle
   useEffect(() => {
@@ -1510,6 +1560,9 @@ export default function VoiceChannel({
 
   useEffect(() => {
     let isMounted = true;
+    setIsLoading(true);
+    setError(null);
+    setToken(null);
 
     const fetchToken = async () => {
       try {
@@ -1572,12 +1625,54 @@ export default function VoiceChannel({
     return () => {
       isMounted = false;
     };
-  }, [roomName, currentUser]);
+  }, [roomName, channelId, currentUser]);
 
-  const handleDisconnected = () => {
+  const handleDisconnected = async () => {
+    // Firestore'dan participant'ı sil
+    if (participantAddedRef.current && db) {
+      try {
+        const participantRef = doc(db, 'channels', channelId, 'participants', currentUser.uid);
+        await deleteDoc(participantRef);
+      } catch (error) {
+        console.error('Error removing participant from Firestore:', error);
+      }
+    }
+    participantAddedRef.current = false;
     roomRef.current = null;
     onLeave();
   };
+
+  // Kullanıcı sesli kanala girdiğinde Firestore'a ekle
+  useEffect(() => {
+    if (!db || !channelId || !currentUser.uid) return;
+
+    const addParticipant = async () => {
+      if (!db) return;
+      try {
+        const participantRef = doc(db, 'channels', channelId, 'participants', currentUser.uid);
+        await setDoc(participantRef, {
+          uid: currentUser.uid,
+          displayName: currentUser.displayName || currentUser.email?.split('@')[0] || 'Kullanıcı',
+          photoURL: currentUser.photoURL || null,
+          joinedAt: serverTimestamp(),
+        }, { merge: true });
+        participantAddedRef.current = true;
+      } catch (error) {
+        console.error('Error adding participant to Firestore:', error);
+      }
+    };
+
+    addParticipant();
+
+    // Cleanup: component unmount olduğunda veya channelId değiştiğinde participant'ı sil
+    return () => {
+      if (participantAddedRef.current && db) {
+        const participantRef = doc(db, 'channels', channelId, 'participants', currentUser.uid);
+        deleteDoc(participantRef).catch(console.error);
+        participantAddedRef.current = false;
+      }
+    };
+  }, [channelId, currentUser.uid, currentUser.displayName, currentUser.email, currentUser.photoURL]);
 
   if (isLoading) {
     return (
@@ -1630,8 +1725,9 @@ export default function VoiceChannel({
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-[#313338]">
+    <div className="h-full flex flex-col bg-[#313338]">
       <LiveKitRoom
+        key={`${channelId}-${roomName}`} // channelId değiştiğinde component'i yeniden mount et
         video={false}
         audio={true}
         token={token}

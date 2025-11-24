@@ -38,6 +38,11 @@ service cloud.firestore {
       match /favorites/{favoriteId} {
         allow read, write: if isOwner(userId);
       }
+      
+      // Settings subcollection (kullanıcı ayarları)
+      match /settings/{settingsId} {
+        allow read, write: if isOwner(userId);
+      }
     }
     
     // CHANNELS Collection
@@ -65,10 +70,12 @@ service cloud.firestore {
       // MESSAGES Subcollection
       match /messages/{messageId} {
         // Mesaj okuma: Authenticated kullanıcılar
-        // DM kontrolü client-side'da yapılıyor
+        // DM kontrolü client-side'da yapılıyor, burada sadece authenticated kontrolü
+        // Güvenlik için: DM kanallarında sadece participants mesajları görebilir (client-side filtreleme)
         allow read: if isAuthenticated();
         
         // Mesaj gönderme: Authenticated kullanıcılar
+        // DM kontrolü client-side'da yapılıyor
         allow create: if isAuthenticated() &&
                          request.resource.data.uid == request.auth.uid &&
                          request.resource.data.displayName is string &&
@@ -99,6 +106,25 @@ service cloud.firestore {
         // Typing durumu silme: Kendi durumunu silebilir
         allow delete: if isAuthenticated() && 
                          typingId == request.auth.uid;
+      }
+      
+      // PARTICIPANTS Subcollection (Sesli kanal katılımcıları)
+      match /participants/{participantId} {
+        // Katılımcı listesini herkes okuyabilir (authenticated)
+        allow read: if isAuthenticated();
+        
+        // Katılımcı ekleme: Sadece kendini ekleyebilir
+        allow create: if isAuthenticated() && 
+                       participantId == request.auth.uid &&
+                       request.resource.data.uid == request.auth.uid;
+        
+        // Katılımcı güncelleme: Sadece kendini güncelleyebilir
+        allow update: if isAuthenticated() && 
+                       participantId == request.auth.uid;
+        
+        // Katılımcı silme: Sadece kendini silebilir
+        allow delete: if isAuthenticated() && 
+                       participantId == request.auth.uid;
       }
     }
   }

@@ -1,0 +1,136 @@
+@import url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css');
+@import url('https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/atom-one-dark.min.css');
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #2b2d31;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1a1b1e;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #404249;
+}
+
+body {
+  font-family: "gg sans", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.message-enter {
+  animation: fadeIn 0.15s ease-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.msg-content a {
+  color: #00a8fc;
+  text-decoration: none;
+}
+
+.msg-content a:hover {
+  text-decoration: underline;
+}
+
+.code-wrapper {
+  margin-top: 6px;
+  border: 1px solid #1e1f22;
+  border-radius: 4px;
+  background: #2b2d31;
+  font-size: 0.85rem;
+  text-align: left;
+}
+
+.code-header {
+  background: #1e1f22;
+  color: #b9bbbe;
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  font-family: monospace;
+  border-bottom: 1px solid #111214;
+}
+
+code.hljs {
+  padding: 10px !important;
+  background: #2b2d31 !important;
+  font-family: "Consolas", monospace;
+}
+
+code.inline-code {
+  background: #1e1f22;
+  color: #e2e8f0;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 0.9em;
+}
+
+.typing-avatar {
+  animation: typingBounce 1s ease-in-out infinite;
+}
+
+@keyframes typingBounce {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+.typing-dots {
+  display: inline-block;
+  opacity: 0.6;
+  animation: typingDots 1.4s ease-in-out infinite;
+}
+
+@keyframes typingDots {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.toast {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  background: #2b2d31;
+  color: white;
+  padding: 12px 20px;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 1000;
+  animation: toastSlideIn 0.3s ease-out;
+}
+
+@keyframes toastSlideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
